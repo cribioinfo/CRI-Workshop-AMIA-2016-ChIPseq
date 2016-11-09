@@ -36,3 +36,7 @@ There are two main Jupyter notebooks for this session:
 
 If something goes wrong, the `02.Run_ChIPseq.hands_on.rendered.ipynb` notebook can be used which has all the outputs rendered.
 In addition, the `workshop_extended` directory contains notebooks with more information that you can browse on your own time.
+
+### License
+
+These materials are licensed via [LGPLv3](https://www.gnu.org/licenses/lgpl-3.0.en.html) with a copy available in this repository.
