@@ -147,3 +147,14 @@ executes the `utils/build_config_files.sh` script to create the configuration fi
 This bash script is a small utility to help with the estimation of our FRiP values. It first gets the total number of reads 
 by counting the number of lines in our BED file created from our BAM file. It then counts the total number of overlapping 
 peaks from our intersected BED file and divides it by the total number of reads.
+
+**`utils/run_multiqc.sh`**
+
+This is another bash script that is used to run [MultiQC](http://multiqc.info/) which gathers the FastQC outputs and creates
+a very nice HTML visualization of the results.
+
+## Other Information
+
+Within the `ChIP-Seq-02-Analysis.ipynb` I have Jupyter Notebook cells that will automatically run the pipeline which you 
+are welcome to do on your own; however, remember to only execute it once and wait for the `[*]` to clear from the left side 
+of the cell.
