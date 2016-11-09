@@ -1,0 +1,377 @@
+/**
+ * 2016 AMIA ChIP-Seq Pipeline
+ * Center for Research Informatics
+ * University of Chicago
+ * cri.uchicago.edu
+ * Kyle Hernandez - <khernandez@bsd.uchicago.edu>
+ * LGPLv3
+ *
+ * This pipeline takes the fastq files and runs the following pipeline:
+ * FastQC -> Trimmomatic -> bwa aln -> sambamba -> deeptools ->
+ * MACS2/Q -> bedtools intersect -> FrIP estimation
+ */
+
+/**
+ * Command line arguments
+ */
+string configFile help "The configuration file"
+string[] contrastFiles help "The contrast config files"
+string runDir help "The top level directory for output files"
+string logDir help "The top level directory for log files"
+
+/**
+ * Check arguments
+ */
+if( configFile.isEmpty() ) error "Required input -configFile"
+if( contrastFiles.isEmpty() ) error "Required input -contrastFiles"
+if( runDir.isEmpty() ) error "Required input -runDir"
+if( logDir.isEmpty() ) error "Required input -logDir"
+
+# Convert to key/value map
+string{} configMap = config(configFile)
+
+/**
+ * Load the sample list
+ */
+string[] sampleConfigs = loadSampleConfigs( contrastFiles )
+
+# Max threads to use
+int maxThreads = configMap{"maxThreads"}.parseInt() 
+
+/**
+ * Loop over each sample and process
+ */
+for( string sampleCfg : sampleConfigs ) {
+  string{} cfg = config(sampleCfg)
+  string sample = cfg{"name"}
+  string fastqFile = cfg{"fastq"}
+
+  # Step 00: Run Fastq
+  RunFastQC( sample, fastqFile, configMap )
+
+  # Step 01: Run trimmomatic
+  string trimFastq = RunTrimmomatic( sample, fastqFile, configMap )
+
+  # Step 02: Run Alignment and postprocessing
+  string dedupBam = RunAlignment( sample, trimFastq, cfg{"readgroup_string"}, configMap )
+}
+
+/**
+ * Loop over each contract to process
+ */
+string[] treatments
+string[] controls
+for( string contrastCfg : contrastFiles ) {
+  # Get data
+  string{} cfg     = config(contrastCfg)
+  string contrast  = cfg{"name"}
+  string treatment = cfg{"ip_sample_id"}
+  string control   = cfg{"control_sample_id"}
+  
+  # Append to treatments and controls list
+  if( ! treatments.has(treatment) ) treatments.add(treatment)
+  if( ! controls.has(control) ) controls.add(control)
+ 
+  # Step 03: Run Q Peak caller for the quality metrics
+  RunQPeaks( treatment, control, contrast, configMap )
+  
+  // Step 04: Run MACS2 Peak caller
+  RunMacs2( treatment, control, contrast, configMap )
+}
+
+/**
+ * Now, we need to intersect the peaks called by the two peak callers
+ * and estimate FRiP
+ */
+for( string treatment : treatments ) {
+  string[] bedFiles
+  for( string control : controls ) {
+    string bedFile = "$runDir/04-MACS2/$treatment.$control/$treatment.$control" + \
+                     "_peaks.narrowPeak"
+    bedFiles.add(bedFile)
+  } 
+
+  // Step 05: Intersect
+  string finalBed = RunIntersectBed( treatment, bedFiles, configMap )
+
+  // Step 06: Estimate FRiP
+  EstimateFRiP( treatment, finalBed, configMap )
+
+}
+
+// ------------ END MAIN PROGRAM -------------- //
+
+// -------------------------------------------- //
+// -------------------------------------------- //
+// ------------ Programs to run --------------- //
+
+/**
+ * Runs FastQC raw read quality control
+ */
+void RunFastQC( string sample, string fastqFile, string{} opt ) {
+  string fastqcExe    = opt{"fastqcExe"} 
+  string fastqcRunDir = "$runDir/00-fastqc/$sample" 
+  string fastqcLogDir = "$logDir/00-fastqc/$sample"
+  string fastqcTaskId = "$sample.00-fastqc"
+  string fastqBase    = fastqFile.baseName(".fq.gz")
+  println(fastqBase)
+  string fastqcHtml   = "$fastqcRunDir/$fastqBase" + "_fastqc.html"
+  string fastqcLogs   = "$fastqcLogDir/$sample.00-fastqc.logs"
+  checkPath(fastqcRunDir)
+  checkPath(fastqcLogDir)
+  //task( fastqcHtml <- fastqFile, cpus := maxThreads, mem := 2 * G, taskName := fastqcTaskId ) {
+  //  sys $fastqcExe -o $fastqcRunDir --extract --nogroup -t $maxThreads $fastqFile > $fastqcLogs 2>&1
+  //} 
+
+}
+
+/**
+ * Runs trimmomatic adapter trimming and quality filtering 
+ */
+string RunTrimmomatic( string sample, string fastqFile, string{} opt ) {
+  string trimmomaticExe    = opt{"trimmomaticExe"}
+  string adapterFasta      = opt{"adapterFasta"}
+  string trimmomaticRunDir = "$runDir/01-trimmomatic/$sample" 
+  string trimmomaticLogDir = "$logDir/01-trimmomatic/$sample"
+  string trimmomaticTaskId = "$sample.01-trimmomatic"
+  string fastqBase         = fastqFile.baseName(".fq.gz")
+  string trimmomaticFastq  = "$trimmomaticRunDir/$fastqBase" + ".trimmed.fq.gz"
+  string trimmomaticLogs   = "$trimmomaticLogDir/$sample.01-trimmomatic.logs"
+  checkPath(trimmomaticRunDir)
+  checkPath(trimmomaticLogDir)
+
+  task( trimmomaticFastq <- fastqFile, cpus := maxThreads, mem := 2 * G, taskName := trimmomaticTaskId ) {
+    sys java -Xmx2G -jar $trimmomaticExe SE -phred33 $fastqFile $trimmomaticFastq \
+        ILLUMINACLIP:$adapterFasta:2:30:10 SLIDINGWINDOW:4:15 MINLEN:36 > $trimmomaticLogs 2>&1 
+  }
+
+  return(trimmomaticFastq)
+}
+
+/**
+ * Runs bwa aln, sorting, and PCR duplicate removal. Finally,
+ * create normalized bigwig files using deeptools
+ */
+string RunAlignment( string sample, string fastqFile, string readgroup, string{} opt ) {
+  // List holding tmp files
+  string[] tmpList
+
+  // Step 01: Run Alignment
+  // First, align, convert to bam, and filter
+  string reference    = opt{"reference"}
+  string bwaExe       = opt{"bwaExe"}
+  string sambambaExe  = opt{"sambambaExe"}
+  string bwaAlnRunDir = "$runDir/02-bwa/$sample"
+  string bwaAlnLogDir = "$logDir/02-bwa/$sample"
+  string bwaLogs      = "$bwaAlnLogDir/$sample.bwa_aln.logs" 
+  string samseLogs    = "$bwaAlnLogDir/$sample.samse.logs" 
+  string fltLogs      = "$bwaAlnLogDir/$sample.filter.logs" 
+  string fltBam       = "$bwaAlnRunDir/$sample.bwa_aln.flt.bam"
+  string bwaAlnTaskId = "$sample.02-bwa.aln"
+  checkPath(bwaAlnRunDir)
+  checkPath(bwaAlnLogDir)
+  println(sample)
+  dep( fltBam <- fastqFile, cpus := maxThreads, mem := 6 * G, taskName := bwaAlnTaskId ) {
+    sys $bwaExe aln -t $maxThreads -q 2 $reference $fastqFile 2> $bwaLogs | \
+        $bwaExe samse -r $readgroup $reference - $fastqFile 2> $samseLogs | \
+        $sambambaExe view -F "not unmapped and mapping_quality > 10" -p -f bam \
+        -S -t $maxThreads -o $fltBam /dev/stdin > $fltLogs 2>&1 
+  } 
+  tmpList.add(fltBam)
+
+  // Next, sort bam
+  string sortTmpDir   = "$runDir/02-bwa/$sample/sort_tmp"
+  string sortLogs     = "$bwaAlnLogDir/$sample.sort.logs" 
+  string srtBam       = "$bwaAlnRunDir/$sample.bwa_aln.flt.sort.bam"
+  string srtBai       = "$bwaAlnRunDir/$sample.bwa_aln.flt.sort.bam.bai"
+  string sortTaskId   = "$sample.02-bwa.sort"
+  checkPath(sortTmpDir)
+  dep( srtBam <- fltBam, cpus := maxThreads, mem := 4 * G, taskName := sortTaskId ) {
+    sys $sambambaExe sort -m 2GB --tmpdir=$sortTmpDir -t $maxThreads -p -o $srtBam $fltBam > $sortLogs 2>&1
+    sys rm -rf $sortTmpDir
+  }
+  tmpList.add([srtBam, srtBai])  
+  
+  // Finally, mark duplicates
+  string dedupTmpDir  = "$runDir/02-bwa/$sample/dedup_tmp"
+  string dedupLogs    = "$bwaAlnLogDir/$sample.dedup.logs" 
+  string dedupBam     = "$bwaAlnRunDir/$sample.bwa_aln.dedup.bam"
+  string dedupBai     = "$bwaAlnRunDir/$sample.bwa_aln.dedup.bam.bai"
+  string dedupTaskId  = "$sample.02-bwa.dedup"
+  checkPath(dedupTmpDir)
+  dep( dedupBam <- srtBam, cpus := maxThreads, mem := 4 * G, taskName := dedupTaskId ) {
+    sys $sambambaExe markdup -t $maxThreads -p -r --tmpdir=$dedupTmpDir $srtBam $dedupBam > $dedupLogs 2>&1
+    sys rm -rf $dedupTmpDir
+  } 
+  tmpList.add([sortTmpDir, dedupTmpDir])
+
+  // Now, we make our bigwig
+  string deeptoolsExe  = opt{"deeptoolsExe"}
+  string bigwigLogs    = "$bwaAlnLogDir/$sample.bigwig.logs" 
+  string bigwigOut     = "$bwaAlnRunDir/$sample.bwa_aln.bw"
+  string bigwigTaskId  = "$sample.02-bwa.deeptools.bigwig"
+  dep( bigwigOut <- dedupBam, cpus := maxThreads, mem := 4 * G, taskName := bigwigTaskId ) {
+    sys $deeptoolsExe --bam $dedupBam -o $bigwigOut -of bigwig -p $maxThreads --normalizeTo1x 2451960000 \
+        --binSize 10 --ignoreForNormalization chrX > $bigwigLogs 2>&1
+  } 
+
+  goal([dedupBam, bigwigOut])
+
+  tmpList.rmOnExit()
+  return(dedupBam)
+}
+
+/**
+ * Run Q Peak caller for the quality control purposes. Not using the peaks for any downstream
+ * analyses.
+ */
+void RunQPeaks( string treatment, string control, string contrast, string{} opt ) {
+  # Get the input bams
+  string treatmentBam = "$runDir/02-bwa/$treatment/$treatment.bwa_aln.dedup.bam"
+  string controlBam   = "$runDir/02-bwa/$control/$control.bwa_aln.dedup.bam"
+
+  # Setup files
+  string qExe         = opt{"qExe"}
+  string qPeakRunDir  = "$runDir/03-Q/$contrast"
+  string qPeakLogDir  = "$logDir/03-Q/$contrast"
+  checkPath(qPeakRunDir)
+  checkPath(qPeakLogDir)
+  string qPeakTaskId  = "$contrast.03-Q"
+  string qPeakRunPfx  = "$qPeakRunDir/$contrast" 
+  string qPeakRunLog  = "$qPeakLogDir/$contrast.03-Q.logs" 
+  string rScript      = "$qPeakRunDir/$contrast-Q-binding-characteristics.R" 
+  string statsFile    = "$qPeakRunDir/$contrast-Q-quality-statistics.tab"
+  dep([rScript, statsFile] <- [treatmentBam, controlBam], cpus := maxThreads, \
+      mem := 4 * G, taskName := qPeakTaskId) {
+    sys $qExe --treatment-sample $treatmentBam --control-sample $controlBam \
+        --out-prefix $qPeakRunPfx \
+        -p $maxThreads > $qPeakRunLog 2>&1 
+  }
+
+  # Make the rplot
+  string characteristicsPlot = "$qPeakRunDir/$contrast-Q-binding-characteristics.pdf" 
+  string plotTaskId          = "$contrast.03-Q.plot"
+
+  dep( characteristicsPlot <- rScript, cpus := 1, mem := 250 * M, taskName := plotTaskId ) {
+    sys Rscript $rScript
+  } 
+
+  goal(characteristicsPlot)
+}
+
+/**
+ * Runs MACS2 peak caller
+ */
+void RunMacs2( string treatment, string control, string contrast, string{} opt ) {
+  # Get the input bams
+  string treatmentBam = "$runDir/02-bwa/$treatment/$treatment.bwa_aln.dedup.bam"
+  string controlBam   = "$runDir/02-bwa/$control/$control.bwa_aln.dedup.bam"
+
+  # Setup files
+  string macsExe     = opt{"macsExe"}
+  string macsRunDir  = "$runDir/04-MACS2/$contrast"
+  string macsTmpDir  = "$runDir/04-MACS2/$contrast/tmp"
+  string macsLogDir  = "$logDir/04-MACS2/$contrast"
+  checkPath(macsRunDir)
+  checkPath(macsLogDir)
+  checkPath(macsTmpDir)
+  string macsTaskId  = "$contrast.04-MACS2"
+  string macsRunPfx  = "$macsRunDir/$contrast" 
+  string macsRunLog  = "$macsLogDir/$contrast.04-MACS2.logs" 
+  string rScript     = macsRunPfx + "_model.r" 
+  string narrowPeak  = macsRunPfx + "_peaks.narrowPeak" 
+  string excelPeak   = macsRunPfx + "_peaks.xls" 
+  string summitsPeak = macsRunPfx + "_summits.bed" 
+  task([rScript, narrowPeak, excelPeak, summitsPeak] <- [treatmentBam, controlBam], \
+       cpus := 1, mem := 2 * G, \
+       taskName := macsTaskId) {
+    sys $macsExe callpeak -t $treatmentBam -c $controlBam -f BAM -g hs --outdir $macsRunDir \
+        -n $contrast -q 0.05 --tempdir $macsTmpDir > $macsRunLog 2>&1
+    sys rm -rf $macsTmpDir 
+  }
+
+  # Make the rplot
+  string characteristicsPlot = macsRunPfx + "_model.pdf" 
+  string plotTaskId          = "$contrast.04-MACS2.plot"
+
+  task( characteristicsPlot <- rScript, cpus := 1, mem := 250 * M, taskName := plotTaskId ) {
+    sys cd $macsRunDir
+    sys Rscript $rScript
+  }
+}
+
+/**
+ * Runs bedtools intersect to get the peaks called by both control 
+ * types in the contrast.
+ */
+string RunIntersectBed( string treatment, string[] bedFiles, string{} opt ) {
+  # Setup files
+  string intersectExe    = opt{"intersectExe"}
+  string intersectRunDir = "$runDir/05-Intersect"
+  string intersectLogDir = "$logDir/05-Intersect"
+  checkPath(intersectRunDir)
+  checkPath(intersectLogDir)
+  string intersectTaskId = "$treatment.05-Intersect"
+  string intersectBed    = "$intersectRunDir/$treatment.intersected.narrowPeak.bed"
+  string intersectLog    = "$intersectLogDir/$treatment.intersectBed.logs"
+  string bedA            = bedFiles[0]
+  string bedB            = bedFiles[1]
+  task(intersectBed <- bedFiles, cpus := 1, mem := 250 * M, taskName := intersectTaskId ) {
+    sys $intersectExe -a $bedA -b $bedB -u > $intersectBed 2> $intersectLog
+  } 
+
+  return( intersectBed )
+}
+
+/**
+ * Estimates FRiP for each treatment sample
+ */
+void EstimateFRiP( string treatment, string peakFile, string{} opt ) {
+  // Setup files
+  string bamToBedExe      = opt{"bamToBedExe"}
+  string intersectExe     = opt{"intersectExe"}
+  string fripExe          = opt{"fripExe"}
+  string treatmentBam     = "$runDir/02-bwa/$treatment/$treatment.bwa_aln.dedup.bam"
+  string fripRunDir       = "$runDir/06-FRiP"
+  checkPath(fripRunDir)
+  string fripTaskId       = "$treatment.06-FRiP"
+  string fripBed          = "$fripRunDir/$treatment.frip.bamtobed.bed"
+  string fripIntersectBed = "$fripRunDir/$treatment.frip.intersectBed"
+  string fripFile         = "$fripRunDir/$treatment.frip.txt"
+
+  task(fripFile <- [treatmentBam, peakFile], cpus := 1, mem := 250 * M, taskName := fripTaskId ) {
+    sys $bamToBedExe -i $treatmentBam > $fripBed
+    sys $intersectExe -a $fripBed -b $peakFile -c -f 0.20 > $fripIntersectBed
+    sys $fripExe $fripBed $fripIntersectBed > $fripFile 
+  } 
+  fripBed.rmOnExit()
+  fripIntersectBed.rmOnExit()
+}
+
+
+// ------------ Helper Utilities --------------- //
+void checkPath( string pathName ) {
+  if( !pathName.exists() ) pathName.mkdir()
+}
+
+string[] loadSampleConfigs( string[] cfgs ) {
+  string[] slist
+  string[] cfgList
+  for( string cfg : cfgs ) {
+    string{} contrastCfg = config(cfg)
+
+    string ip = contrastCfg{"ip_sample_id"}
+    if( ! slist.has(ip) ) {
+      slist.add(ip)
+      cfgList.add(contrastCfg{"ip_sample_config"})
+    }
+
+    string control = contrastCfg{"control_sample_config"}
+    if( ! slist.has(control) ) {
+      slist.add(control)
+      cfgList.add(contrastCfg{"control_sample_config"})
+    }
+  }
+
+  return cfgList
+}

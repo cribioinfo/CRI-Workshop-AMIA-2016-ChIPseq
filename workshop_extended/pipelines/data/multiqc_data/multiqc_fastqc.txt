@@ -1,0 +1,5 @@
+Sample	adapter_content	Sequences flagged as poor quality	sequence_duplication_levels	avg_sequence_length	Encoding	per_base_sequence_quality	sequence_length_distribution	Sequence length	File type	basic_statistics	per_sequence_gc_content	Total Sequences	per_base_n_content	per_base_sequence_content	overrepresented_sequences	%GC	total_deduplicated_percentage	Filename	kmer_content	per_sequence_quality_scores
+U2932.Ab1 | SRR1200652	pass	0.0	pass	42.0	Sanger / Illumina 1.9	pass	pass	42.0	Conventional base calls	pass	fail	32037730.0	pass	warn	pass	45.0	91.1676071174	SRR1200652.fastq.gz	fail	pass
+U2932.IgG | SRR1200655	pass	0.0	pass	42.0	Sanger / Illumina 1.9	pass	pass	42.0	Conventional base calls	pass	fail	35881954.0	pass	warn	pass	45.0	91.7505408356	SRR1200655.fastq.gz	fail	pass
+U2932.RNAPII | SRR1200654	pass	0.0	pass	42.0	Sanger / Illumina 1.9	pass	pass	42.0	Conventional base calls	pass	pass	38878543.0	pass	pass	pass	47.0	95.5353030797	SRR1200654.fastq.gz	fail	pass
+U2932.input | SRR1200656	pass	0.0	pass	42.0	Sanger / Illumina 1.9	pass	pass	42.0	Conventional base calls	pass	fail	41350010.0	pass	warn	pass	45.0	97.7476718613	SRR1200656.fastq.gz	fail	pass

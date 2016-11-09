@@ -1,0 +1,5 @@
+Module	Section	Sample Name	Source
+FastQC	all_sections	U2932.Ab1 | SRR1200652	/home/ubuntu/data/chipseq/fullset/fastqc/U2932.Ab1/SRR1200652_fastqc.zip
+FastQC	all_sections	U2932.IgG | SRR1200655	/home/ubuntu/data/chipseq/fullset/fastqc/U2932.IgG/SRR1200655_fastqc.zip
+FastQC	all_sections	U2932.input | SRR1200656	/home/ubuntu/data/chipseq/fullset/fastqc/U2932.input/SRR1200656_fastqc.zip
+FastQC	all_sections	U2932.RNAPII | SRR1200654	/home/ubuntu/data/chipseq/fullset/fastqc/U2932.RNAPII/SRR1200654_fastqc.zip
