@@ -132,3 +132,18 @@ fastq = /home/ubuntu/data/chipseq/subset/input_files/Ab1.subset.fq.gz
 readgroup_string = "@RG\tID:SRR1200652\tLB:SRR1200652\tSM:U2932.Ab1\tPU:SRX497418.SRR1200652.SAMN02692998.SRS579413"
 ```
 
+_Note: the `readgroup_string` parameter provides our BWA aligner the readgroup metadata information. You can read [here](http://gatkforums.broadinstitute.org/gatk/discussion/6472/read-groups) about the various information contained in a read group_
+
+#### Other Files
+
+**`RunAmiaPipeline.sh`**
+
+This bash script was developed to make it easier to run our BDS pipeline. It automatically sets up the paths, creates
+the configuration files, and executes the BDS pipeline. It would likely need to be changed to run on your own system. It
+executes the `utils/build_config_files.sh` script to create the configuration files with the correct paths.
+
+**`utils/estimate_frip.sh`**
+
+This bash script is a small utility to help with the estimation of our FRiP values. It first gets the total number of reads 
+by counting the number of lines in our BED file created from our BAM file. It then counts the total number of overlapping 
+peaks from our intersected BED file and divides it by the total number of reads.
