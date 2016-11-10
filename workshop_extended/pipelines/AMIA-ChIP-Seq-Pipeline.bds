@@ -75,7 +75,7 @@ for( string contrastCfg : contrastFiles ) {
   # Step 03: Run Q Peak caller for the quality metrics
   RunQPeaks( treatment, control, contrast, configMap )
   
-  // Step 04: Run MACS2 Peak caller
+  # Step 04: Run MACS2 Peak caller
   RunMacs2( treatment, control, contrast, configMap )
 }
 
@@ -91,10 +91,10 @@ for( string treatment : treatments ) {
     bedFiles.add(bedFile)
   } 
 
-  // Step 05: Intersect
+  # Step 05: Intersect
   string finalBed = RunIntersectBed( treatment, bedFiles, configMap )
 
-  // Step 06: Estimate FRiP
+  # Step 06: Estimate FRiP
   EstimateFRiP( treatment, finalBed, configMap )
 
 }
@@ -114,14 +114,13 @@ void RunFastQC( string sample, string fastqFile, string{} opt ) {
   string fastqcLogDir = "$logDir/00-fastqc/$sample"
   string fastqcTaskId = "$sample.00-fastqc"
   string fastqBase    = fastqFile.baseName(".fq.gz")
-  println(fastqBase)
   string fastqcHtml   = "$fastqcRunDir/$fastqBase" + "_fastqc.html"
   string fastqcLogs   = "$fastqcLogDir/$sample.00-fastqc.logs"
   checkPath(fastqcRunDir)
   checkPath(fastqcLogDir)
-  //task( fastqcHtml <- fastqFile, cpus := maxThreads, mem := 2 * G, taskName := fastqcTaskId ) {
-  //  sys $fastqcExe -o $fastqcRunDir --extract --nogroup -t $maxThreads $fastqFile > $fastqcLogs 2>&1
-  //} 
+  task( fastqcHtml <- fastqFile, cpus := maxThreads, mem := 2 * G, taskName := fastqcTaskId ) {
+    sys $fastqcExe -o $fastqcRunDir --extract --nogroup -t $maxThreads $fastqFile > $fastqcLogs 2>&1
+  } 
 
 }
 
@@ -153,11 +152,11 @@ string RunTrimmomatic( string sample, string fastqFile, string{} opt ) {
  * create normalized bigwig files using deeptools
  */
 string RunAlignment( string sample, string fastqFile, string readgroup, string{} opt ) {
-  // List holding tmp files
+  # List holding tmp files
   string[] tmpList
 
-  // Step 01: Run Alignment
-  // First, align, convert to bam, and filter
+  # Step 01: Run Alignment
+  # First, align, convert to bam, and filter
   string reference    = opt{"reference"}
   string bwaExe       = opt{"bwaExe"}
   string sambambaExe  = opt{"sambambaExe"}
@@ -170,7 +169,6 @@ string RunAlignment( string sample, string fastqFile, string readgroup, string{}
   string bwaAlnTaskId = "$sample.02-bwa.aln"
   checkPath(bwaAlnRunDir)
   checkPath(bwaAlnLogDir)
-  println(sample)
   dep( fltBam <- fastqFile, cpus := maxThreads, mem := 6 * G, taskName := bwaAlnTaskId ) {
     sys $bwaExe aln -t $maxThreads -q 2 $reference $fastqFile 2> $bwaLogs | \
         $bwaExe samse -r $readgroup $reference - $fastqFile 2> $samseLogs | \
@@ -179,7 +177,7 @@ string RunAlignment( string sample, string fastqFile, string readgroup, string{}
   } 
   tmpList.add(fltBam)
 
-  // Next, sort bam
+  # Next, sort bam
   string sortTmpDir   = "$runDir/02-bwa/$sample/sort_tmp"
   string sortLogs     = "$bwaAlnLogDir/$sample.sort.logs" 
   string srtBam       = "$bwaAlnRunDir/$sample.bwa_aln.flt.sort.bam"
@@ -192,7 +190,7 @@ string RunAlignment( string sample, string fastqFile, string readgroup, string{}
   }
   tmpList.add([srtBam, srtBai])  
   
-  // Finally, mark duplicates
+  # Finally, mark duplicates
   string dedupTmpDir  = "$runDir/02-bwa/$sample/dedup_tmp"
   string dedupLogs    = "$bwaAlnLogDir/$sample.dedup.logs" 
   string dedupBam     = "$bwaAlnRunDir/$sample.bwa_aln.dedup.bam"
@@ -205,7 +203,7 @@ string RunAlignment( string sample, string fastqFile, string readgroup, string{}
   } 
   tmpList.add([sortTmpDir, dedupTmpDir])
 
-  // Now, we make our bigwig
+  # Now, we make our bigwig
   string deeptoolsExe  = opt{"deeptoolsExe"}
   string bigwigLogs    = "$bwaAlnLogDir/$sample.bigwig.logs" 
   string bigwigOut     = "$bwaAlnRunDir/$sample.bwa_aln.bw"
@@ -327,7 +325,7 @@ string RunIntersectBed( string treatment, string[] bedFiles, string{} opt ) {
  * Estimates FRiP for each treatment sample
  */
 void EstimateFRiP( string treatment, string peakFile, string{} opt ) {
-  // Setup files
+  # Setup files
   string bamToBedExe      = opt{"bamToBedExe"}
   string intersectExe     = opt{"intersectExe"}
   string fripExe          = opt{"fripExe"}
