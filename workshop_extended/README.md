@@ -7,6 +7,11 @@ November 13, 2016<br>
 The notebooks available here contain additional materials which you are free to explore on your own time. In addition, the
 assets directory contains the images used in the notebooks.
 
+### Other Guides
+
+* `2016-AMIA-Workshop-AWS-iPython-Guide.pdf` - How to launch Jupyter Notebook on Amazon Web Services EC2 instance
+* `2016-AMIA-Workshop-Common-Formats.md` - Overview of common file formats used in ChIP-seq (there is also a PDF version)
+
 ### Pipeline
 
 Within the `pipelines` directory you will find several files:
